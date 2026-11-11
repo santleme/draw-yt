@@ -73,9 +73,26 @@ drawyt extract path/to/video.mp4 --out frames/VIDEO_ID --fps 1
 # level 0 pruning + manifest
 drawyt prune frames/VIDEO_ID --out work/VIDEO_ID
 
+# rank the frames for human review (scores are suggestions, not labels)
+drawyt triage frames/VIDEO_ID --out work/VIDEO_ID/review.csv --limit 200
+
+# prepare full-resolution frames and overlapping detail tiles for review
+drawyt review-pack frames/VIDEO_ID --out work/VIDEO_ID/review-pack --limit 20
+
 # coreset selection across everything that survived
 drawyt coreset work/ --budget 3000 --out coreset/
 ```
+
+`review-pack` keeps each original frame as the review unit and creates detail tiles only for images larger than 512 px. Tiles overlap by 64 source pixels; the versioned `manifest.jsonl` records source/tile SHA-256 values and tile coordinates. A tile cap fails clearly instead of silently skipping image areas. To request three independent Codex opinions over the full frames and their tiles, invoke `$drawyt-multiscale-review` with the generated package. The Python CLI prepares local assets; the Codex skill orchestrates reviewers.
+
+`drawyt triage` writes one CSV row per frame with independent layer fields:
+quality (`quality_*`), sheet (`sheet_*`), hand (`hand_*`), hand landmarks
+(`hand_landmarks_*`), strokes/ink (`strokes_*` / `ink_*`), and scene
+(`scene_*`). Current quality, sheet, and stroke values are heuristic review
+signals. Hand presence, hand landmarks, and semantic scene classification are
+marked `unavailable` until validated detectors are integrated. Unavailable
+values stay empty; they are not treated as negative detections. No layer
+automatically removes a frame.
 
 ### The YouTube stages
 
@@ -139,6 +156,8 @@ Active development. What is implemented and tested today:
 - [x] Live end-to-end proof: real videos downloaded and pruned on a bot-checked network ([receipt](docs/LIVE_TEST_2026-11-09.md)); `drawyt fetch` one-shot command
 - [x] Frame extraction via `ffmpeg`, manifests and receipts for every stage
 - [x] Domain judges (Level 1) wired behind the `Judge` interface — baseline bright-region judge scores kept frames today (`--judge`); Draw's neural sheet/ink models and hand landmarker plug into the same interface
+- [x] Layered frame triage for human review: quality, sheet-like pixels, and stroke-like marks; hand, hand landmarks, and semantic scene layers are explicitly marked unavailable
+- [x] Multiscale review package: full frames, overlapping detail tiles, source coordinates and hashes, plus a Codex-side three-reviewer workflow
 - [ ] Neural judges (Draw's sheet/ink ONNX + hand landmarker) behind that interface
 - [ ] Information pruning (Level 3): judge disagreement + uncertainty ranking
 - [ ] First full run: pilot on 5 videos, then the 33-video CC BY batch already identified

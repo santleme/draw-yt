@@ -22,6 +22,8 @@ from .judges import BrightRegionJudge
 from .license_check import check_license
 from .manifest import FrameRecord, VideoRecord, write_frames_csv, write_receipt, write_videos_jsonl
 from .prune import IMAGE_SUFFIXES, prune_frames
+from .review_pack import build_review_pack
+from .triage import triage_frames
 
 
 def _read_csv(path: Path) -> list[dict]:
@@ -124,6 +126,44 @@ def cmd_prune(args) -> int:
     write_frames_csv(records, out / "frames_manifest.csv")
     write_receipt({"stage": "prune_level0", **receipt}, out / "receipt_prune.json")
     print(f"prune: {receipt['kept']}/{receipt['input_frames']} kept, dropped={receipt['dropped']} -> {out}")
+    return 0
+
+
+def cmd_triage(args) -> int:
+    frames_dir = Path(args.frames)
+    if not frames_dir.is_dir():
+        print(f"triage: frames directory not found: {frames_dir}", file=sys.stderr)
+        return 1
+    rows = triage_frames(frames_dir, video_id=args.video_id)
+    if args.limit > 0:
+        rows = rows[:args.limit]
+    if not rows:
+        print(f"triage: no image frames found in {frames_dir}", file=sys.stderr)
+        return 1
+    _write_csv(rows, Path(args.out))
+    print(f"triage: {len(rows)} review candidates -> {args.out} (scores are suggestions; fill review_decision)")
+    return 0
+
+
+def cmd_review_pack(args) -> int:
+    try:
+        receipt = build_review_pack(
+            Path(args.frames),
+            Path(args.out),
+            video_id=args.video_id,
+            limit=args.limit,
+            tile_size=args.tile_size,
+            overlap=args.overlap,
+            max_tiles_per_frame=args.max_tiles_per_frame,
+            max_total_tiles=args.max_total_tiles,
+        )
+    except (OSError, ValueError) as exc:
+        print(f"review-pack: {exc}", file=sys.stderr)
+        return 1
+    print(
+        f"review-pack: {receipt['frames']} frames, {receipt['tiles']} detail tiles "
+        f"-> {receipt['manifest']} (local package; tiles are not extra votes)"
+    )
     return 0
 
 
@@ -249,6 +289,24 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--video-id")
     p.add_argument("--judge", action="store_true", help="score kept frames with the baseline sheet/ink judge")
     p.set_defaults(fn=cmd_prune)
+
+    p = sub.add_parser("triage", help="rank frames for human review; never drops frames")
+    p.add_argument("frames", help="directory containing extracted image frames")
+    p.add_argument("--out", required=True, help="review CSV; record decisions in review_decision")
+    p.add_argument("--video-id")
+    p.add_argument("--limit", type=int, default=0, help="maximum CSV rows after full ranking (0 means all)")
+    p.set_defaults(fn=cmd_triage)
+
+    p = sub.add_parser("review-pack", help="prepare local full-frame and detail-tile review assets")
+    p.add_argument("frames", help="directory containing extracted image frames")
+    p.add_argument("--out", required=True, help="new or empty review-package directory")
+    p.add_argument("--video-id")
+    p.add_argument("--limit", type=int, default=50, help="maximum top-ranked frames (0 means all)")
+    p.add_argument("--tile-size", type=int, default=512, help="maximum tile edge in source pixels")
+    p.add_argument("--overlap", type=int, default=64, help="tile overlap in source pixels")
+    p.add_argument("--max-tiles-per-frame", type=int, default=64, help="fail instead of omitting tiles above this count")
+    p.add_argument("--max-total-tiles", type=int, default=500, help="fail instead of creating an oversized review package")
+    p.set_defaults(fn=cmd_review_pack)
 
     p = sub.add_parser("coreset", help="k-center coreset selection over a frames folder")
     p.add_argument("frames")
